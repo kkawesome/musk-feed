@@ -4,10 +4,10 @@ on:
   schedule:
     # 每天北京时间早上 08:00 (UTC 00:00) 自动执行
     - cron: '0 0 * * *'
-  workflow_dispatch: # 允许你在网页上手动点击按钮随时测试运行
+  workflow_dispatch: # 支持手动点击随时测试触发
 
 permissions:
-  contents: write # 授予自动提交并推送代码的权限
+  contents: write
 
 jobs:
   update-feed:
@@ -21,26 +21,68 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Update Tweets Data
+      - name: Fetch and Update Real Musk Tweets
         run: |
           python3 - << 'EOF'
-          import json, os, datetime
+          import urllib.request, json, ssl, os
 
-          # 可以在这里添加抓取逻辑，或自动更新今日时间戳与精选数据
-          file_path = 'elon_tweets.json'
-          if os.path.exists(file_path):
-              with open(file_path, 'r', encoding='utf-8') as f:
-                  data = json.load(f)
-          else:
-              data = []
+          ctx = ssl._create_unverified_context()
+          # 真实的马斯克公开推特全量归档数据源
+          source_url = "https://gist.githubusercontent.com/j4ckxyz/1518890aa6d319d23a516bf14240d2b2/raw/"
 
-          print(f"当前推文库共有 {len(data)} 条数据，准备更新...")
+          print("正在连接远程马斯克推特数据流...")
+          req = urllib.request.Request(source_url, headers={"User-Agent": "Mozilla/5.0"})
+          with urllib.request.urlopen(req, timeout=20, context=ctx) as resp:
+              raw_tweets = json.loads(resp.read().decode("utf-8"))
 
-          # 写回文件
-          with open(file_path, 'w', encoding='utf-8') as f:
-              json.dump(data, f, ensure_ascii=False, indent=2)
+          print(f"成功获取原始推文池：{len(raw_tweets)} 条，开始筛选硬核干货...")
 
-          print("推文数据已成功校验并刷新！")
+          results = []
+          for t in raw_tweets:
+              text = t.get("text", "").strip()
+              # 过滤掉过短的碎片回复（如单一的 'Yes' 或 '@某人'）
+              if len(text) < 35 or text.startswith("@") or "http" in text:
+                  continue
+              
+              tid = t.get("id", "")
+              turl = t.get("url", f"https://x.com/elonmusk/status/{tid}")
+              stats = t.get("stats", {})
+              likes = stats.get("likes", 0)
+              likes_str = f"{likes/1000:.1f}K" if likes >= 1000 else str(likes)
+              retweets = stats.get("retweets", 0)
+              retweets_str = f"{retweets/1000:.1f}K" if retweets >= 1000 else str(retweets)
+              
+              # 智能分类
+              cat = "极客硬核"
+              lower = text.lower()
+              if any(k in lower for k in ["time", "work", "sleep", "hour", "day", "speed"]):
+                  cat = "时间与工作"
+              elif any(k in lower for k in ["physics", "first principles", "rule", "law", "truth", "math"]):
+                  cat = "第一性原理"
+              elif any(k in lower for k in ["mars", "starship", "rocket", "space", "earth", "moon", "starlink"]):
+                  cat = "星际未来"
+
+              results.append({
+                  "id": f"tweet-{tid}",
+                  "contentZh": text, # 真实推文原文
+                  "contentEn": text,
+                  "dateStr": t.get("created_at", "2025")[:10],
+                  "category": cat,
+                  "likesCount": likes_str,
+                  "repostsCount": retweets_str,
+                  "context": f"马斯克在 X (Twitter) 发布的真实推文，点赞超 {likes_str}。",
+                  "url": turl
+              })
+              
+              # 取最新的 30 条高质量推文
+              if len(results) >= 30:
+                  break
+
+          print(f"筛选出 {len(results)} 条带真实 X 链接的推文，正在写入 elon_tweets.json...")
+          with open('elon_tweets.json', 'w', encoding='utf-8') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
+
+          print("写入完成！")
           EOF
 
       - name: Commit and Push if Changed
@@ -48,4 +90,4 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add elon_tweets.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update musk tweets" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto sync 30 real tweets from X [skip ci]" && git push)
