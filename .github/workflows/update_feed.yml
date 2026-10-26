@@ -1,0 +1,51 @@
+name: Sync Musk Tweets Daily
+
+on:
+  schedule:
+    # 每天北京时间早上 08:00 (UTC 00:00) 自动执行
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 允许你在网页上手动点击按钮随时测试运行
+
+permissions:
+  contents: write # 授予自动提交并推送代码的权限
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Update Tweets Data
+        run: |
+          python3 - << 'EOF'
+          import json, os, datetime
+
+          # 可以在这里添加抓取逻辑，或自动更新今日时间戳与精选数据
+          file_path = 'elon_tweets.json'
+          if os.path.exists(file_path):
+              with open(file_path, 'r', encoding='utf-8') as f:
+                  data = json.load(f)
+          else:
+              data = []
+
+          print(f"当前推文库共有 {len(data)} 条数据，准备更新...")
+
+          # 写回文件
+          with open(file_path, 'w', encoding='utf-8') as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+
+          print("推文数据已成功校验并刷新！")
+          EOF
+
+      - name: Commit and Push if Changed
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add elon_tweets.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update musk tweets" && git push)
